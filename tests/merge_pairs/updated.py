@@ -1,3 +1,6 @@
+from enum import Enum
+
+
 class SchemaClass:
     new_before_schema_field: str
     old_schema_field: str
@@ -23,4 +26,3 @@ class SchemaEnum(str, Enum):
     NEW_FIRST = "new_first"
     A = "A"
     NEW_LAST = "new_last"
-    CUSTOM = "custom"

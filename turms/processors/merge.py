@@ -36,8 +36,8 @@ def _code_for(node: cst.CSTNode) -> str:
 def merge_decorator(generated: cst.Decorator, existing: cst.Decorator) -> cst.Decorator:
     """Merges a single decorator.
 
-    Keeps every keyword argument from the freshly generated decorator, 
-    but preserves any additional keyword arguments that only exist 
+    Keeps every keyword argument from the freshly generated decorator,
+    but preserves any additional keyword arguments that only exist
     on the hand-edited (existing) decorator.
     """
 
@@ -64,7 +64,9 @@ def merge_decorator(generated: cst.Decorator, existing: cst.Decorator) -> cst.De
     if not preserved_args:
         return generated
 
-    merged_call = generated_call.with_changes(args=[*generated_call.args, *preserved_args])
+    merged_call = generated_call.with_changes(
+        args=[*generated_call.args, *preserved_args]
+    )
     return generated.with_changes(decorator=merged_call)
 
 
@@ -75,6 +77,32 @@ def merge_decorators(
         merge_decorator(gen_dec, existing[index]) if index < len(existing) else gen_dec
         for index, gen_dec in enumerate(generated)
     ]
+
+
+def enum_base_names(module: cst.Module) -> set[str]:
+    """Local names bound by `from enum import ...` in the module."""
+    names = set()
+    for stmt in module.body:
+        if not isinstance(stmt, cst.SimpleStatementLine):
+            continue
+        for node in stmt.body:
+            if (
+                isinstance(node, cst.ImportFrom)
+                and isinstance(node.module, cst.Name)
+                and node.module.value == "enum"
+                and not isinstance(node.names, cst.ImportStar)
+            ):
+                for alias in node.names:
+                    bound = alias.asname.name if alias.asname else alias.name
+                    names.add(bound.value)
+    return names
+
+
+def is_enum(cls: cst.ClassDef, enum_names: set[str]) -> bool:
+    return any(
+        isinstance(base.value, cst.Name) and base.value.value in enum_names
+        for base in cls.bases
+    )
 
 
 def merge_functions(
@@ -103,7 +131,9 @@ def merge_statements(
     return new_def
 
 
-def merge_class(generated: cst.ClassDef, existing: cst.ClassDef) -> cst.ClassDef:
+def merge_class(
+    generated: cst.ClassDef, existing: cst.ClassDef, enum_names: set[str] = frozenset()
+) -> cst.ClassDef:
     # merge the two classes
     body_symbols = OrderedDict()
     body_implemented_symbols = []
@@ -132,7 +162,7 @@ def merge_class(generated: cst.ClassDef, existing: cst.ClassDef) -> cst.ClassDef
                     body_symbol_position[name] = len(new_body)
                     new_body.append(merge_statements(body_symbols[name], node))
                     body_implemented_symbols.append(name)
-                else:
+                elif not is_enum(generated, enum_names):
                     new_body.append(node)
             else:
                 new_body.append(node)
@@ -204,6 +234,7 @@ def merge_code(old_code: str, new_code: str, config: MergeProcessorConfig) -> st
     existing_module = cst.parse_module(old_code)
     new_module = cst.parse_module(new_code)
 
+    enum_names = enum_base_names(new_module)
     symbols = OrderedDict()
 
     implemented_symbols = []
@@ -230,7 +261,7 @@ def merge_code(old_code: str, new_code: str, config: MergeProcessorConfig) -> st
                 # merge the two classes
 
                 symbol_position[node.name.value] = len(new_body)
-                new_body.append(merge_class(x, node))
+                new_body.append(merge_class(x, node, enum_names))
                 implemented_symbols.append(node.name.value)
             else:
                 new_body.append(node)
